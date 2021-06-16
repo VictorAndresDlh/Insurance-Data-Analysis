@@ -136,4 +136,4 @@ SINH %>%
   ggplot(aes(x = VLRRSVAPAGAMP)) +
   geom_histogram(colour = "white")
 
-descdist(as.numeric(unlist(SINH[,11])), discrete  = FALSE)
+descdist(as.numeric(unlist(SINH[,11])), boot = 300, discrete  = F)
