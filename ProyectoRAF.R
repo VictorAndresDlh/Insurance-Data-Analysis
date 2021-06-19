@@ -5,7 +5,6 @@ library(ROI)
 library(quantmod)
 library(xts)
 library(readr)
-library(fitdistr)
 library(fitdistrplus)
 library(Matrix)
 library(modopt.matlab)
@@ -37,7 +36,7 @@ str(G8)
 summary(G8)
 
 # ANALISIS DE G8
-# Histograma y distribucion de Valor de la prima suscrita incluida RC
+# Histograma y distribucion de "Valor de la prima suscrita incluida RC"
 G8 %>%
   select(VLRPRISUSCR) %>%
   ggplot(aes(x = VLRPRISUSCR)) +
@@ -69,18 +68,18 @@ plot(fitdist(as.numeric(unlist(G8[,5])), "unif"))
 SINH %>% 
   select(VLRPRIMAPAG) %>% 
   ggplot(aes(x = VLRPRIMAPAG)) +
-  geom_histogram(colour = "white")
+  geom_density()
 
 descdist(as.numeric(unlist(SINH[,2])), boot = 300, discrete  = FALSE)
-plot(fitdist(as.numeric(unlist(SINH[,2])), "gamma", method = "mle", lower=c(0,0), start=list(scale=1,shape=1)))
-
+plot(fitdist(as.numeric(unlist(SINH[,2])), "norm"))
 # Histograma y distribucion de Valor de la prima suscrita incluida RC
 SINH %>% 
   select(VLRPRISUSCR) %>% 
   ggplot(aes(x = VLRPRISUSCR)) +
   geom_histogram(colour = "white")
 
-descdist(as.numeric(unlist(SINH[,3])), discrete  = FALSE)
+descdist(as.numeric(unlist(SINH[,3])), boot = 300,  discrete  = FALSE)
+plot(fitdist(as.numeric(unlist(SINH[,2])), "exp"))
 
 # Histograma y distribucion de Valor de la prima suscrita incluida RC
 SINH %>% 
