@@ -5,6 +5,8 @@ library(ROI)
 library(quantmod)
 library(xts)
 library(readr)
+library(MASS)
+library(MASSExtra)
 library(fitdistrplus)
 library(Matrix)
 library(modopt.matlab)
@@ -17,9 +19,8 @@ library(ggplot2)
 library(arsenal)
 library(ordinal)
 library(lubridate)
-library(MASS)
-library(MASSExtra)
 library(actuaryr)
+library(tictoc)
 
 # Se cargan las bases de datos
 
@@ -55,10 +56,10 @@ for (i in 1:nrow(G8T)) {
   }
 }
 # Escalar los datos
-G8T$VLRASEGU <- ceiling(G8T$VLRASEGU/10^3)
+G8T$VLRASEGU <- G8T$VLRASEGU/10^6
 
 
-# SINHT
+# Se crea un data frame temporal en el caso de ser necesario volver al original
 SINHT <- SINH
 # Escoger unicamente los valores que tenian como estado final "pagado" 
 SINHT <- subset(SINHT, SINHT$ESTADO_FINAL == "Pagado")
@@ -66,19 +67,41 @@ SINHT <- subset(SINHT, SINHT$ESTADO_FINAL == "Pagado")
 SINHT <- subset(SINHT, SINHT$VLRASEGU > 0)
 # Escoger unicamente los datos correspondientes al 2018
 SINHT <- subset(SINHT, year(SINHT$FECHASIN) > 2017)
-# Eliminar los primeros 3000 y ultimos 3000
-SINHT <- SINHT[order(SINHT$VLRSININCUR),]
-SINHT <- head(SINHT, -3000)
-SINHT <- tail(SINHT, -3000)
+# Eliminar datos cuyo valor deducible sea mayor que valor siniestro
+SINHT <- subset(SINHT, SINHT$VLRSININCUR >= SINHT$VLRDEDUCIBLE)
+# Eliminar los datos cuyo valor pagado es 0
+SINHT <- subset(SINHT, SINHT$VLRPAGADO. > 0)
+# Eliminar los datos cuyo valor de siniestro es 0
+SINHT <- subset(SINHT, SINHT$VLRSININCUR > 0)
+
 # Escalar los datos
-SINHT$VLRSININCUR <- ceiling(SINHT$VLRSININCUR/10^3)
+SINHT$VLRSININCUR <- SINHT$VLRSININCUR/10^6
 
 
-# 500 simulaciones de 1600 muestras aleatorias para promediar la media y la varianza
+#-------------------------------------------------------------------------------------
+# Solucion de problemas
+
+# 1. Cual es el valor esperado de S?
+# Es necesario modelar X y N:
+
+# Modelando X
+
+# Encontrar la mejor distribucion para el posible monto de reclamacion
+descdist(as.numeric(as.vector(unlist(SINHT$VLRSININCUR))), boot = 300,  discrete = F)
+x <- fitdist(as.numeric(as.vector(unlist(SINHT$VLRSININCUR))), "gamma", method = "mme")
+plot(x)
+
+xmean <- 0.4273345/0.07793957
+xvar <- 0.4273345/(0.07793957)^2
+
+
+# Modelando N
+
+# 500 simulaciones de 2000 muestras aleatorias para promediar la media y la varianza
 x <- c()
 y <- c()
 for (i in 1:500) {
-  MA <- SINHT[sample(nrow(SINHT), 1600), ]
+  MA <- SINHT[sample(nrow(SINHT), 2000), ]
   diasMA <- count(MA, MA$FECHASIN)
   a <- descdist(diasMA$n,boot = 50, discrete = T)
   x[i] <- a$mean 
@@ -87,53 +110,142 @@ for (i in 1:500) {
 mean(x)
 mean(y)
 mean(y)^(2)/mean(x)
+rm(x)
+rm(y)
 
 
 # Como la varianza(n)/media(n) \approx 1, entonces n distribuye Poisson 
 # Asumimos que el n de 300 polizas tambien distribuye poisson
+
 # Determinar el parametro: media de las reclamaciones por dia, por lo cual
-lambda <- 300/365
+lambda <- sum(((G8T$VLRPRISUSCR/10^6)/1.1)/G8T$VLRASEGU)
 
-
-# Encontrar la mejor distribucion para el posible monto de reclamacion
-descdist(as.numeric(as.vector(unlist(SINHT$VLRSININCUR))), boot = 300,  discrete = F)
-  x <- fitdist(as.numeric(as.vector(unlist(SINHT$VLRSININCUR))), "gamma", method = "mme")
-plot(x)
-
-xmean <- 5.328861/(0.001809636) 
-xvar <- 5.328861/(0.001809636)^2
-
-
-# Algoritmos
 
 #-------------------------------------------------------------------------------------
+# 2. Probabilidad de que la reserva no alcance a cubrir el total de reclamaciones
+# Necesitamos modelar la S del año.
 
-# TLC
-TLC = function(S_inf,S_sup,E_S,var_S) {
+# Reserva
+
+resv <- 0.9*sum((G8T$VLRPRISUSCR/10^6)/(1.1))
+
+# Algoritmos para el año
+
+# TLC APLICADO
+TLC = function(S_inf, S_sup, E_S, var_S) {
   sapply(S_inf:S_sup,
-         function(s){
-           pnorm((s-E_S)/sqrt(var_S),0,1)
+         function(s) {
+           pnorm((s-E_S)/sqrt(var_S), 0, 1)
          })
 }
-TLC_v = TLC(0, sum(tail(sort(G8T$VLRASEGU), 30)), (lambda*30)*(xmean), (lambda*30)*(xvar)^(2)+((xmean)^(2))*(lambda*30))
-#Anexo
-library(knitr)
-# Tabla
-s = 0:(length(TLC_v)-1)
-TLC_P = cbind(s,TLC_v)
-TLC_PJ = kable(TLC_P,
-               caption = "Aproximación con el Teorema Central del Límite", 
-               align = c('c', 'c'), 
-               col.names = c(" s ", " F(s) -> TLC "), 
-               row.names = FALSE,
-               digits = 5000)
-TLC_PJ
+TLC_v_an = TLC(0, sum(G8T$VLRASEGU), (lambda)*(xmean), (lambda)*mean((as.numeric(as.vector(unlist(SINHT$VLRSININCUR))))^2))
 
-#-------------------------------------------------------------------------------------
+# Tabla
+s = 0:(length(TLC_v_an)-1)
+
+
+# Se generan los valores de las probabilidades
+TLC_P_an = cbind(s,TLC_v_an)
+for (i in 1:10) {
+  print((1-TLC_P_an[floor((i/10)*(resv))+2,][2])*100)
+}
+
+
+# Panjer para Poisson APLICADO
+Panjer.Poisson <- function(p, lambda) {
+  if(sum(p) > 1 || any(p < 0)) stop("p parameter not a density")
+  if(lambda*sum(p) > 727) stop("Underflow")
+  cumul <- f <- exp(-lambda*sum(p))
+  r <- length(p)
+  s <- 0
+  repeat {
+    s <- s + 1
+    m <- min(s, r)
+    last <- (lambda/s)*sum(1:m*head(p, m)*rev(tail(f, m)))
+    #sort ya hace lo de rev
+    f <- c(f, last)
+    cumul <- cumul + last
+    if (cumul > 0.99999999)
+      break
+  }
+  return(f)
+}
+P = integer(160)
+P[1] = 0
+for (i in 2:160) {
+  P[i-1] <- dgamma(i-1, shape = 0.4273345, rate = 0.07793957)
+}
+PPan = Panjer.Poisson(P, lambda)
+
+# Tabla
+s = 0:(length(PPan)-1)
+PPan = cbind(s, PPan)
+
+# Se genera la columna para la distribucion
+PPan <- cbind(PPan, integer(nrow(PPan)))
+PPan[1, 3] <- PPan[1, 2]
+PPan
+for (i in 2:nrow(PPan)) {
+  PPan[i, 3] <- PPan[i-1, 3] + PPan[i, 2]
+}
+
+# Se generan los valores de las probabilidades
+for (i in 1:10) {
+  print((1-PPan[floor((i/10)*(resv))+2,][3]))
+}
+
+#------------------------------------------------------------------------------------
+# 3. Valor minimo de reserva para responder con el total de las reclamaciones con un c %
+# de probabilidad
+
+# Interpolacion lineal con TLC
+TLC_P_an[85, ]
+TLC_P_an[86, ]
+
+# Interpolacion lineal con poisson
+PPan[91, ]
+PPan[92, ]
+
+#------------------------------------------------------------------------------
+# 4. Qué tanto tiempo se puede extender la cobertura de las polizas para que 
+# la reserva siga cubriendo el monto total de reclamaciones con una
+# probabilidad del 95% ? 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#------------------------------------------------------------------------------------
+#------------------------------------------------------------------------------------
 
 # Sparse Vector 
 SparseVec <- function(freq) {
-  if (any(freq<0)) stop("negative frequency")
+  if (any(freq < 0)) stop("negative frequency")
   M <- length(freq)
   mu <- sum((1:M)*freq);
   sigma2 <- sum((1:M)^2*freq)
@@ -173,17 +285,17 @@ head(f,10)
 
 # Panjer para Poisson
 Panjer.Poisson <- function(p, lambda) {
-  if(sum(p)>1||any(p<0)) stop("p parameter not a density")
+  if(sum(p) > 1||any(p < 0)) stop("p parameter not a density")
   if(lambda*sum(p) > 727) stop("Underflow")
   cumul <- f <- exp(-lambda*sum(p))
   r <- length(p)
   s <- 0
   repeat {
-    s <- s+1
+    s <- s + 1
     m <- min(s, r)
     last <- (lambda/s)*sum(1:m*head(p,m)*rev(tail(f,m)))
     #sort ya hace lo de rev
-    f <- c(f,last)
+    f <- c(f, last)
     cumul <- cumul + last
     if (cumul > 0.99999999)
       break
@@ -207,9 +319,11 @@ kable( PP , caption = "Recursividad de Panjer",
 # Transformada Rapida de Fourier
 n <- 40;
 p <- rep(0,n);
+p
 p[2:3] <- 0.5; 
+p
 lab <- 1
-f_fft <- Re(fft(exp(lab*(fft(p)-1)), inverse=TRUE))/n
+f_fft <- Re(fft(exp(lab*(fft(p)-1)), inverse = TRUE))/n
 #Anexo
 library(knitr)
 # Tabla
@@ -221,44 +335,6 @@ kable( f_fft , caption = "Recursividad de Panjer con bluce For",
        row.names = FALSE,
        digits = 5000)
 
-#-------------------------------------------------------------------------------------
-
-#SUMA DE POISSON NO INDEPENDIENTES
-SPNI = function(s, j1, j2, j3, n1, n2, n3) {
-  SUMT2 = SS1 <- rep(0, s+1)
-  SUMT1 = matrix(SS1, nrow = length(SS1), ncol = length(SS1))
-  for(j in 0:s) {
-    for(i in 0:j) {
-      SUMT1[i+1, j+1] = ifelse(i%% n1 == 0 & (j-i) %% n2 == 0, dpois(i/n1, j1)*dpois((j-i)/n2, j2), 0)
-    }
-    SUMT2[j+1] = ifelse((s-j)%%n3 == 0 , dpois((s-j)/n3, j3),0 )
-    S1 = as.numeric(colSums(SUMT1)%*%SUMT2)};
-    S1
-  #exp(j1+j2+j3)
-}
-
-# s=3 , Pr[X=1,2,3]=1/4,2/4,1/4, 1*N_1 + 2*N_2 + 3*N_3
-SPNI(3, 1, 2, 1, 1, 2, 3)
-
-
-
-
-TLC = function(S_inf,S_sup,E_S,var_S) {
-  sapply(S_inf:S_sup,
-         function(s){
-           pnorm((s-E_S)/sqrt(var_S),0,1)
-         })
-}
-TLC_v = TLC(0, 20, 10, 3*3+9*3)
-s = 0:(length(TLC_v)-1)
-TLC_P = cbind(s,TLC_v)
-TLC_PJ = kable(TLC_P,
-               caption = "Aproximación con el Teorema Central del Límite", 
-               align = c('c', 'c'), 
-               col.names = c(" s ", " F(s) -> TLC "), 
-               row.names = FALSE,
-               digits = 5000)
-TLC_PJ
 
 
 
@@ -266,86 +342,6 @@ TLC_PJ
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-vecprob = c()
-for (i in 1:max(SINHT$VLRSININCUR)) {
-  vecprob[i] <- dgamma(i, shape = 3.573161e-01, scale = 1/7.801438e-08)
-}
-
-panjernb <- function(r, p, vecp) {
-  a <- 1-p
-  b <- (1-p)*(r-1)
-  c <- c()
-  if (vecp[1] == 0) {
-    c[1] <- 0
-  }
-  else {
-    c[1] <- (p/(1-(1-p)*exp(log(vecp[1]))))^(r)
-  }
-  d <- c()
-  while (sum(c) == 0.99) {
-    for (s in 2:243) {
-      for (h in 1:i) {
-        d[h] <- a+((b*h)/s)*vecp[h+1]*c[s-h]
-        c[s] <- (1/(1-a*vecp[1]))*sum(d)
-      }
-    }
-  }
-  return(c)
-}
-
-
-sum(G8T$VLRPRISUSCR)
-
-1 - pnbinom(40, size = 26.03031, mu = 40.34247)
-
-# Se seleccionan aleatoriamente 3000 polizas 100 veces para determinar
-# la media y la varianza
-
-x <- c()
-y <- c()
-for (i in 1:100) {
-  MA <- SINHT[sample(nrow(SINHT), 3000), ]
-  diasMA <- count(MA, MA$FECHASIN)
-  a <- descdist(diasMA$n,boot = 50, discrete = T)
-  x[i] <- a$mean 
-  y[i] <- a$sd
-}
-mean(x)
-mean(y)
-
-(mean(y)^2)/mean(x)
-
-# Como var(n)/E(n) = 1.2 \approx = 1. Entonces n-poisson
-# Para determinar lambda, se realizan 500 simulaciones para muestras
-# aleatorias de 300 polizas
-
-x <- c()
-for (i in 1:500) {
-  MA <- SINHT[sample(nrow(SINHT), 300), ]
-  diasMA <- count(MA, MA$FECHASIN)
-  a <- descdist(diasMA$n,boot = 50, discrete = T)
-  x[i] <- a$mean 
-}
-mean(x)
 
 
 
