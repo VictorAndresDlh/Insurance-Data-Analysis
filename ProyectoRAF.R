@@ -128,7 +128,7 @@ lambda <- sum(((G8T$VLRPRISUSCR/10^6)/1.1)/G8T$VLRASEGU)
 # Reserva
 
 resv <- 0.9*sum((G8T$VLRPRISUSCR/10^6)/(1.1))
-
+resv
 # Algoritmos para el año
 
 # TLC APLICADO
@@ -138,17 +138,15 @@ TLC = function(S_inf, S_sup, E_S, var_S) {
            pnorm((s-E_S)/sqrt(var_S), 0, 1)
          })
 }
+tic()
 TLC_v_an = TLC(0, sum(G8T$VLRASEGU), (lambda)*(xmean), (lambda)*mean((as.numeric(as.vector(unlist(SINHT$VLRSININCUR))))^2))
-
-# Tabla
-s = 0:(length(TLC_v_an)-1)
-
-
 # Se generan los valores de las probabilidades
+s = 0:(length(TLC_v_an)-1)
 TLC_P_an = cbind(s,TLC_v_an)
 for (i in 1:10) {
-  print((1-TLC_P_an[floor((i/10)*(resv))+2,][2])*100)
+  print((1-TLC_P_an[ceiling((i/10)*(resv))+2,][2])*100)
 }
+toc()
 
 
 # Panjer para Poisson APLICADO
@@ -170,11 +168,15 @@ Panjer.Poisson <- function(p, lambda) {
   }
   return(f)
 }
+# Vector de 0's
 P = integer(160)
+# Se establece la probabilidad en 0
 P[1] = 0
+# Se generan los demas valores del vector de densidad
 for (i in 2:160) {
   P[i-1] <- dgamma(i-1, shape = 0.4273345, rate = 0.07793957)
 }
+tic()
 PPan = Panjer.Poisson(P, lambda)
 
 # Tabla
@@ -191,8 +193,9 @@ for (i in 2:nrow(PPan)) {
 
 # Se generan los valores de las probabilidades
 for (i in 1:10) {
-  print((1-PPan[floor((i/10)*(resv))+2,][3]))
+  print((1-PPan[floor((i/10)*(resv))+2,][3])*100) 
 }
+toc()
 
 #------------------------------------------------------------------------------------
 # 3. Valor minimo de reserva para responder con el total de las reclamaciones con un c %
